@@ -3,7 +3,7 @@ import { resolve } from 'path';
 import * as fs from 'fs';
 import {
   PackageElectronBuilderOptions,
-  syncArtifactVersion,
+  syncArtifactMetadata,
   _createConfigFromOptions,
 } from './executor';
 
@@ -58,7 +58,7 @@ describe('MakeElectronBuilder', () => {
   });
 });
 
-describe('syncArtifactVersion', () => {
+describe('syncArtifactMetadata', () => {
   const packageJsonPath = resolve(
     '.',
     'dist/apps',
@@ -70,15 +70,16 @@ describe('syncArtifactVersion', () => {
   const existsMock = fs.existsSync as jest.Mock;
   const writeMock = fs.writeFileSync as jest.Mock;
 
-  /** Convenience: the version that would be written to the bundled package.json. */
-  const writtenVersion = (): string | undefined =>
+  /** Convenience: the package.json that would be written to the bundle. */
+  const written = (): Record<string, unknown> | undefined =>
     writeMock.mock.calls.length
-      ? JSON.parse(writeMock.mock.calls[0][1]).version
+      ? JSON.parse(writeMock.mock.calls[0][1])
       : undefined;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    // The bundled package.json exists and carries the build-time default.
+    // The bundled package.json exists and carries the build-time defaults
+    // (the Nx project name and the placeholder version).
     existsMock.mockReturnValue(true);
     readMock.mockReturnValue(
       JSON.stringify({ name: 'electron-app', version: '0.0.1' }),
@@ -86,38 +87,73 @@ describe('syncArtifactVersion', () => {
   });
 
   it('should reflect extraMetadata.version into the bundled package.json', () => {
-    syncArtifactVersion(makeOptions({ extraMetadata: { version: '1.2.3' } }));
+    syncArtifactMetadata(makeOptions({ extraMetadata: { version: '1.2.3' } }));
 
     expect(writeMock).toHaveBeenCalledTimes(1);
     expect(writeMock.mock.calls[0][0]).toEqual(packageJsonPath);
-    expect(writtenVersion()).toEqual('1.2.3');
+    expect(written().version).toEqual('1.2.3');
+  });
+
+  it('should reflect extraMetadata.name into the bundled package.json', () => {
+    // The bundled name drives app.name and thereby Electron's default
+    // userData path (%APPDATA%/<name>).
+    syncArtifactMetadata(makeOptions({ extraMetadata: { name: 'my-app' } }));
+
+    expect(written()).toEqual({ name: 'my-app', version: '0.0.1' });
+  });
+
+  it('should deep-merge nested extraMetadata objects', () => {
+    readMock.mockReturnValue(
+      JSON.stringify({
+        name: 'electron-app',
+        version: '0.0.1',
+        author: { name: 'Old Author', email: 'old@example.com' },
+      }),
+    );
+
+    syncArtifactMetadata(
+      makeOptions({ extraMetadata: { author: { name: 'New Author' } } }),
+    );
+
+    expect(written().author).toEqual({
+      name: 'New Author',
+      email: 'old@example.com',
+    });
+  });
+
+  it('should remove a field when its extraMetadata value is null', () => {
+    syncArtifactMetadata(
+      makeOptions({ extraMetadata: { version: null } as never }),
+    );
+
+    expect(written()).toEqual({ name: 'electron-app' });
   });
 
   it('should preserve other package.json fields when updating the version', () => {
-    syncArtifactVersion(makeOptions({ extraMetadata: { version: '1.2.3' } }));
+    syncArtifactMetadata(makeOptions({ extraMetadata: { version: '1.2.3' } }));
 
-    expect(JSON.parse(writeMock.mock.calls[0][1])).toEqual({
+    expect(written()).toEqual({
       name: 'electron-app',
       version: '1.2.3',
     });
   });
 
   it('should fall back to buildVersion when extraMetadata is absent', () => {
-    syncArtifactVersion(makeOptions({ buildVersion: '4.5.6' }));
+    syncArtifactMetadata(makeOptions({ buildVersion: '4.5.6' }));
 
-    expect(writtenVersion()).toEqual('4.5.6');
+    expect(written().version).toEqual('4.5.6');
   });
 
   it('should prefer extraMetadata.version over buildVersion', () => {
-    syncArtifactVersion(
+    syncArtifactMetadata(
       makeOptions({ extraMetadata: { version: '1.2.3' }, buildVersion: '4.5.6' }),
     );
 
-    expect(writtenVersion()).toEqual('1.2.3');
+    expect(written().version).toEqual('1.2.3');
   });
 
-  it('should do nothing when no version override is provided', () => {
-    syncArtifactVersion(makeOptions());
+  it('should do nothing when no metadata override is provided', () => {
+    syncArtifactMetadata(makeOptions());
 
     expect(writeMock).not.toHaveBeenCalled();
   });
@@ -126,17 +162,19 @@ describe('syncArtifactVersion', () => {
     existsMock.mockReturnValue(false);
 
     expect(() =>
-      syncArtifactVersion(makeOptions({ extraMetadata: { version: '1.2.3' } })),
+      syncArtifactMetadata(makeOptions({ extraMetadata: { version: '1.2.3' } })),
     ).not.toThrow();
     expect(writeMock).not.toHaveBeenCalled();
   });
 
-  it('should not rewrite the file when the version already matches', () => {
+  it('should not rewrite the file when the metadata already matches', () => {
     readMock.mockReturnValue(
-      JSON.stringify({ name: 'electron-app', version: '1.2.3' }),
+      JSON.stringify({ name: 'my-app', version: '1.2.3' }),
     );
 
-    syncArtifactVersion(makeOptions({ extraMetadata: { version: '1.2.3' } }));
+    syncArtifactMetadata(
+      makeOptions({ extraMetadata: { name: 'my-app', version: '1.2.3' } }),
+    );
 
     expect(writeMock).not.toHaveBeenCalled();
   });

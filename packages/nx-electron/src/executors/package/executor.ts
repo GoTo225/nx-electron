@@ -71,7 +71,7 @@ export async function executor(
     options = mergePresetOptions(options);
     options = addMissingDefaultOptions(options);
 
-    syncArtifactVersion(options);
+    syncArtifactMetadata(options);
 
     const platforms: Platform[] = _createPlatforms(options.platform);
     const targets: Map<Platform, Map<Arch, string[]>> = _createTargets(
@@ -257,25 +257,36 @@ function _normalizeBuilderOptions(
 }
 
 /**
- * Mirrors the version that the maker options (or a `--extraMetadata.version` /
- * `--buildVersion` command line override) provide into the app's generated
- * `package.json` that is bundled into the artifact.
+ * Mirrors `extraMetadata` (plus a `--buildVersion` fallback for the version)
+ * into the app's generated `package.json` that is bundled into the artifact.
  *
  * electron-builder applies `extraMetadata` to the metadata it uses for naming
  * the installer, but nx-electron ships a pre-generated `package.json` (produced
- * by the `build` executor and copied verbatim from the build output), so that
- * override never reaches the `package.json` embedded inside the artifact. As a
- * result `app.getVersion()` and the bundled `package.json` stayed on the build
- * time version (e.g. `0.0.1`) even though the installer was named correctly.
+ * by the `build` executor and copied verbatim from the build output), so those
+ * overrides never reach the `package.json` embedded inside the artifact. As a
+ * result `app.getVersion()`, `app.name` — and therefore Electron's default
+ * `userData` path (`%APPDATA%/<name>`) — stayed on the build-time values (e.g.
+ * `0.0.1` / the Nx project name) even though the installer was named correctly.
+ *
+ * Follows electron-builder's `extraMetadata` semantics: nested objects are
+ * deep-merged and a `null` value removes the field.
  */
-export function syncArtifactVersion(
+export function syncArtifactMetadata(
   options: PackageElectronBuilderOptions
 ): void {
-  const version: unknown =
-    (options.extraMetadata as { version?: unknown } | undefined)?.version ??
-    options.buildVersion;
+  const metadata: Record<string, unknown> = {
+    ...(options.extraMetadata as Record<string, unknown> | undefined),
+  };
 
-  if (typeof version !== 'string' || version.length === 0) {
+  if (
+    metadata.version === undefined &&
+    typeof options.buildVersion === 'string' &&
+    options.buildVersion.length > 0
+  ) {
+    metadata.version = options.buildVersion;
+  }
+
+  if (Object.keys(metadata).length === 0) {
     return;
   }
 
@@ -292,11 +303,10 @@ export function syncArtifactVersion(
 
   const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 
-  if (packageJson.version === version) {
+  if (!applyExtraMetadata(packageJson, metadata)) {
     return;
   }
 
-  packageJson.version = version;
   writeFileSync(
     packageJsonPath,
     JSON.stringify(packageJson, null, 2) + '\n',
@@ -304,8 +314,44 @@ export function syncArtifactVersion(
   );
 
   logger.info(
-    `Set bundled package.json version to "${version}" for "${options.name}".`
+    `Applied extraMetadata (${Object.keys(metadata).join(
+      ', '
+    )}) to the bundled package.json of "${options.name}".`
   );
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Deep-merges `source` into `target`; returns whether anything changed. */
+function applyExtraMetadata(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>
+): boolean {
+  let changed = false;
+
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    if (value === null) {
+      if (key in target) {
+        delete target[key];
+        changed = true;
+      }
+    } else if (isPlainObject(value) && isPlainObject(target[key])) {
+      changed =
+        applyExtraMetadata(target[key] as Record<string, unknown>, value) ||
+        changed;
+    } else if (JSON.stringify(target[key]) !== JSON.stringify(value)) {
+      target[key] = value;
+      changed = true;
+    }
+  }
+
+  return changed;
 }
 
 function mergePresetOptions(
