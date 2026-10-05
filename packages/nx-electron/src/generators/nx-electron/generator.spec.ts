@@ -21,7 +21,12 @@ fdescribe('app', () => {
   beforeEach(() => {
     jest.spyOn(console, 'warn').mockImplementation();
 
-    tree = createTreeWithEmptyWorkspace();
+    // The Nx 23 test workspace defaults to the oxfmt formatter. The jest
+    // configuration generator then installs oxfmt into a temp directory and
+    // loads it, which Jest cannot parse (ES module); prettier 3 cannot be
+    // loaded inside Jest either. The specs read the generated files as JSON,
+    // so they don't need a formatter.
+    tree = createTreeWithEmptyWorkspace({ formatter: 'none' });
 
     options = {
       name: 'electron-app',
