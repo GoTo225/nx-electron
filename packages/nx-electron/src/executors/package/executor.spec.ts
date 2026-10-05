@@ -1,8 +1,9 @@
 import { ExecutorContext, logger } from '@nx/devkit';
-import { resolve } from 'path';
+import { join, resolve } from 'path';
 import * as fs from 'fs';
-import { FileSet } from 'electron-builder';
+import { build, FileSet } from 'electron-builder';
 import {
+  executor,
   PackageElectronBuilderOptions,
   resolveAppSourcePath,
   syncArtifactMetadata,
@@ -16,12 +17,19 @@ jest.mock('glob');
 
 jest.mock('fs-extra');
 
+jest.mock('electron-builder', () => ({
+  ...jest.requireActual('electron-builder'),
+  build: jest.fn(),
+}));
+
 jest.mock('fs', () => {
   const actualFs = jest.requireActual('fs');
   return {
     ...actualFs,
     existsSync: jest.fn(actualFs.existsSync),
     readFileSync: jest.fn(actualFs.readFileSync),
+    statSync: jest.fn(actualFs.statSync),
+    writeFile: jest.fn(),
     writeFileSync: jest.fn(),
   };
 });
@@ -97,6 +105,17 @@ describe('resolveAppSourcePath', () => {
     );
   });
 
+  it('should fall back to <sourcePath>/<name> without a project graph', () => {
+    const context = {
+      root: '.',
+      projectName: 'electron-app',
+    } as ExecutorContext;
+
+    expect(resolveAppSourcePath(makeOptions(), context)).toEqual(
+      resolve('.', 'dist/apps', 'electron-app'),
+    );
+  });
+
   it('should fall back to <sourcePath>/<name> without an nx-electron:build target', () => {
     const context = makeContext({
       build: { executor: 'nx:run-commands', options: { outputPath: 'out' } },
@@ -135,18 +154,90 @@ describe('_createBaseConfig', () => {
   });
 });
 
-describe('MakeElectronBuilder', () => {
-  let context: ExecutorContext;
-  let options: PackageElectronBuilderOptions;
+describe('executor', () => {
+  const actualFs = jest.requireActual('fs');
+  const buildMock = build as jest.Mock;
+  const writeFileMock = fs.writeFile as unknown as jest.Mock;
+  const statMock = fs.statSync as jest.Mock;
+  const existsMock = fs.existsSync as jest.Mock;
 
-  beforeEach(async () => {
-    options = makeOptions();
+  const root = resolve('workspace-root');
+  // an app in a nested directory: its build output is not <sourcePath>/<name>
+  const context = {
+    root,
+    projectName: 'electron-app',
+    projectGraph: {
+      nodes: {
+        'electron-app': {
+          name: 'electron-app',
+          type: 'app',
+          data: {
+            root: 'apps/desktop/shell',
+            sourceRoot: 'apps/desktop/shell/src',
+            targets: {
+              build: {
+                executor: 'nx-electron:build',
+                options: { outputPath: 'dist/apps/desktop/shell' },
+              },
+            },
+          },
+        },
+      },
+      dependencies: {},
+    },
+  } as unknown as ExecutorContext;
+  const appSourcePath = resolve(root, 'dist/apps/desktop/shell');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(logger, 'warn').mockImplementation();
+    buildMock.mockResolvedValue([]);
+    writeFileMock.mockImplementation((path, data, options, callback) =>
+      callback(null),
+    );
+    // no maker.options.json, every copy step source exists
+    statMock.mockReturnValue({ isFile: () => false });
+    existsMock.mockReturnValue(true);
   });
 
-  describe('run', () => {
-    it('should find a way to test application packaging', async () => {
-      expect(true).toEqual(true);
-    });
+  afterEach(() => {
+    statMock.mockImplementation(actualFs.statSync);
+    existsMock.mockImplementation(actualFs.existsSync);
+  });
+
+  it('should write the index.js into the build output of the app', async () => {
+    await expect(
+      executor(makeOptions({ frontendProject: '' }), context),
+    ).resolves.toEqual({ success: true });
+
+    expect(writeFileMock).toHaveBeenCalledWith(
+      join(appSourcePath, 'index.js'),
+      `const Main = require('./electron-app/main.js');`,
+      expect.anything(),
+      expect.any(Function),
+    );
+  });
+
+  it('should package the app from the build output of the app', async () => {
+    await executor(makeOptions({ frontendProject: '' }), context);
+
+    expect(buildMock).toHaveBeenCalledTimes(1);
+    const { config } = buildMock.mock.calls[0][0];
+    expect(config.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ from: appSourcePath, to: 'electron-app' }),
+        expect.objectContaining({ from: appSourcePath, to: '' }),
+      ]),
+    );
+  });
+
+  it('should fail when electron-builder fails', async () => {
+    jest.spyOn(logger, 'error').mockImplementation();
+    buildMock.mockRejectedValue(new Error('electron-builder failed'));
+
+    await expect(
+      executor(makeOptions({ frontendProject: '' }), context),
+    ).resolves.toEqual({ success: false });
   });
 });
 
