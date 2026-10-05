@@ -64,10 +64,14 @@ export async function generator(tree: Tree, schema: Schema) {
 
   let jestInstall: GeneratorCallback;
   if (options.unitTestRunner === 'jest') {
-    jestInstall = await jestInitGenerator(tree, {});
+    jestInstall = await jestInitGenerator(tree, {
+      skipPackageJson: options.skipPackageJson,
+    });
   }
 
-  const installTask = addDependencies(tree);
+  const installTask = options.skipPackageJson
+    ? () => undefined
+    : addDependencies(tree);
 
   if (!options.skipFormat) {
     await formatFiles(tree);

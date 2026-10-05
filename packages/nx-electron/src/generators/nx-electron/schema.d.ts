@@ -4,7 +4,7 @@ export interface Schema {
   directory: string;
   name?: string;
   frontendProject?: string;
-  addProxy: boolean;
+  addProxy?: boolean;
   proxyPort: number;
   skipFormat: boolean;
   skipPackageJson: boolean;

@@ -132,6 +132,7 @@ function addProject(tree: Tree, options: NormalizedSchema) {
     sourceRoot: joinPathFragments(options.appProjectRoot, 'src'),
     projectType: 'application',
     targets: {},
+    tags: options.parsedTags.length ? options.parsedTags : undefined,
   };
   project.targets.build = getBuildConfig(project, options);
   project.targets.serve = getServeConfig(options);
@@ -150,6 +151,7 @@ function addProject(tree: Tree, options: NormalizedSchema) {
     packageJson.nx = {
       name: options.name !== options.importPath ? options.name : undefined,
       targets: project.targets,
+      tags: project.tags,
     };
   }
 
@@ -311,7 +313,7 @@ export async function generator(tree: Tree, schema: Schema) {
     tasks.push(jestTask);
   }
 
-  if (options.frontendProject) {
+  if (options.frontendProject && options.addProxy) {
     addProxy(tree, options);
   }
 
@@ -367,6 +369,7 @@ async function normalizeOptions(
       ? joinPathFragments(appProjectRoot, 'dist')
       : joinPathFragments('dist', appProjectRoot),
     parsedTags,
+    addProxy: options.addProxy ?? true,
     isUsingTsSolutionConfig,
     useProjectJson: options.useProjectJson ?? !isUsingTsSolutionConfig,
     linter: options.linter ?? Linter.EsLint,

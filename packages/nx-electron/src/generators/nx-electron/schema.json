@@ -35,8 +35,8 @@
     },
     "addProxy": {
       "type": "boolean",
-      "default": false,
-      "description": "Add proxy configuration to the frontend project."
+      "default": true,
+      "description": "Add a proxy configuration for the electron application to the serve target of the frontend project. Only used together with frontendProject."
     },
     "proxyPort": {
       "type": "number",

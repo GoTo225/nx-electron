@@ -26,7 +26,6 @@ fdescribe('app', () => {
 
     options = {
       directory: 'electron-app',
-      addProxy: false,
       proxyPort: 4000,
       skipFormat: false,
       skipPackageJson: false,
@@ -197,18 +196,37 @@ fdescribe('app', () => {
     });
   });
 
-  // TODO: Reimplement tags option
-  // describe('when the tags option is provided', () => {
-  //   beforeEach(async () => {
-  //     options.tags = 'example';
-  //     await applicationGenerator(tree, options);
-  //     projectJson = readJson(tree, 'electron-app/project.json');
-  //   });
+  describe('when the tags option is provided', () => {
+    beforeEach(async () => {
+      options.tags = 'electron, desktop';
+      await applicationGenerator(tree, options);
+      projectJson = readProjectConfiguration(tree, 'electron-app');
+    });
 
-  //   it('should generate the project json with the correct tag', () => {
-  //     expect(projectJson.tags).toBe('example');
-  //   });
-  // });
+    it('should add the tags to the project', () => {
+      expect(projectJson.tags).toEqual(['electron', 'desktop']);
+    });
+  });
+
+  describe('when the skipPackageJson option is provided', () => {
+    beforeEach(async () => {
+      options.skipPackageJson = true;
+      await applicationGenerator(tree, options);
+    });
+
+    it('should not add dependencies to the root package.json', () => {
+      const { dependencies = {}, devDependencies = {} } = readJson(
+        tree,
+        'package.json',
+      );
+      expect(Object.keys({ ...dependencies, ...devDependencies })).not.toEqual(
+        expect.arrayContaining(['nx-electron']),
+      );
+      expect(Object.keys({ ...dependencies, ...devDependencies })).not.toEqual(
+        expect.arrayContaining(['electron']),
+      );
+    });
+  });
 
   describe('when the frontendProject option is provided', () => {
     beforeEach(async () => {
@@ -249,11 +267,32 @@ fdescribe('app', () => {
       ]);
     });
 
-    it('should add the proxy config to the frontend project', () => {
+    it('should add the proxy config to the frontend project by default', () => {
       expect(
         readProjectConfiguration(tree, 'electron-frontend').targets.serve
           .options.proxyConfig,
       ).toBe('apps/electron-frontend/proxy.conf.json');
+    });
+  });
+
+  describe('when addProxy is false', () => {
+    beforeEach(async () => {
+      addProjectConfiguration(tree, 'electron-frontend', {
+        root: 'apps/electron-frontend',
+        projectType: 'application',
+        targets: { serve: { executor: '@nx/angular:serve', options: {} } },
+      });
+      options.frontendProject = 'electron-frontend';
+      options.addProxy = false;
+      await applicationGenerator(tree, options);
+    });
+
+    it('should not add a proxy config to the frontend project', () => {
+      expect(tree.exists('apps/electron-frontend/proxy.conf.json')).toBeFalsy();
+      expect(
+        readProjectConfiguration(tree, 'electron-frontend').targets.serve
+          .options.proxyConfig,
+      ).toBeUndefined();
     });
   });
 
@@ -407,6 +446,19 @@ fdescribe('app', () => {
         expect(readJson(tree, 'electron-app/package.json').nx.name).toBe(
           'desktop',
         );
+      });
+    });
+
+    describe('with tags', () => {
+      beforeEach(async () => {
+        options.tags = 'electron';
+        await applicationGenerator(tree, options);
+      });
+
+      it('should add the tags to the package.json nx configuration', () => {
+        expect(readJson(tree, 'electron-app/package.json').nx.tags).toEqual([
+          'electron',
+        ]);
       });
     });
 
