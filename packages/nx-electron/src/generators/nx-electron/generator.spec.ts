@@ -268,7 +268,7 @@ fdescribe('app', () => {
   });
 
   describe('when the workspace uses the TS solution setup', () => {
-    beforeEach(async () => {
+    beforeEach(() => {
       updateJson(tree, 'package.json', (json) => ({
         ...json,
         workspaces: ['packages/*'],
@@ -281,17 +281,110 @@ fdescribe('app', () => {
         files: [],
         references: [],
       });
-
-      await applicationGenerator(tree, options);
     });
 
-    // TypeScript 6 requires an explicit rootDir (TS5011) and the TS solution
-    // setup's tsconfig.base.json does not define one.
-    it('should set the rootDir of the tsconfig.app.json file to src', () => {
-      expect(
-        readJson(tree, 'electron-app/tsconfig.app.json').compilerOptions
-          .rootDir,
-      ).toBe('src');
+    describe('with the default options', () => {
+      beforeEach(async () => {
+        await applicationGenerator(tree, options);
+        projectJson = readProjectConfiguration(tree, '@proj/electron-app');
+      });
+
+      it('should use the scoped import path as project name', () => {
+        expect(projectJson.root).toBe('electron-app');
+      });
+
+      it('should write the project configuration to package.json', () => {
+        expect(tree.exists('electron-app/project.json')).toBeFalsy();
+        const packageJson = readJson(tree, 'electron-app/package.json');
+        expect(packageJson.name).toBe('@proj/electron-app');
+        expect(packageJson.private).toBe(true);
+        expect(Object.keys(packageJson.nx.targets)).toEqual(
+          expect.arrayContaining(['build', 'serve', 'package', 'make']),
+        );
+      });
+
+      it('should write the build output into the project', () => {
+        expect(projectJson.targets.build.options.outputPath).toBe(
+          'electron-app/dist',
+        );
+      });
+
+      it('should reference the project name in the package and make targets', () => {
+        expect(projectJson.targets.package.options.name).toBe(
+          '@proj/electron-app',
+        );
+        expect(projectJson.targets.make.options.name).toBe(
+          '@proj/electron-app',
+        );
+        expect(projectJson.targets.serve.options.buildTarget).toBe(
+          '@proj/electron-app:build',
+        );
+      });
+
+      it('should add the project to the package manager workspaces', () => {
+        expect(readJson(tree, 'package.json').workspaces).toEqual([
+          'packages/*',
+          'electron-app',
+        ]);
+      });
+
+      it('should add the project to the root tsconfig.json references', () => {
+        expect(readJson(tree, 'tsconfig.json').references).toEqual([
+          { path: './electron-app' },
+        ]);
+      });
+
+      it('should generate a solution style tsconfig.json', () => {
+        expect(readJson(tree, 'electron-app/tsconfig.json')).toEqual({
+          extends: '../tsconfig.base.json',
+          files: [],
+          include: [],
+          references: [{ path: './tsconfig.app.json' }],
+        });
+      });
+
+      // TypeScript 6 requires an explicit rootDir (TS5011) and the TS solution
+      // setup's tsconfig.base.json does not define one.
+      it('should configure the tsconfig.app.json file for the TS solution setup', () => {
+        const tsconfigApp = readJson(tree, 'electron-app/tsconfig.app.json');
+        expect(tsconfigApp.extends).toBe('../tsconfig.base.json');
+        expect(tsconfigApp.compilerOptions).toEqual(
+          expect.objectContaining({
+            outDir: 'dist',
+            rootDir: 'src',
+            tsBuildInfoFile: 'dist/tsconfig.app.tsbuildinfo',
+            types: ['node'],
+          }),
+        );
+      });
+    });
+
+    describe('with a name', () => {
+      beforeEach(async () => {
+        options.name = 'desktop';
+        await applicationGenerator(tree, options);
+      });
+
+      it('should use the provided name as project name', () => {
+        expect(readProjectConfiguration(tree, 'desktop').root).toBe(
+          'electron-app',
+        );
+        expect(readJson(tree, 'electron-app/package.json').nx.name).toBe(
+          'desktop',
+        );
+      });
+    });
+
+    describe('with useProjectJson', () => {
+      beforeEach(async () => {
+        options.useProjectJson = true;
+        await applicationGenerator(tree, options);
+      });
+
+      it('should write the project configuration to project.json', () => {
+        expect(tree.exists('electron-app/project.json')).toBeTruthy();
+        expect(readJson(tree, 'electron-app/package.json').nx).toBeUndefined();
+      });
     });
   });
 });
