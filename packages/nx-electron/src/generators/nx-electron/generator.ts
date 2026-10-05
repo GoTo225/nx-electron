@@ -3,7 +3,6 @@ import {
   formatFiles,
   generateFiles,
   GeneratorCallback,
-  getWorkspaceLayout,
   joinPathFragments,
   names,
   offsetFromRoot,
@@ -18,6 +17,10 @@ import {
   updateProjectConfiguration,
   runTasksInSerial,
 } from '@nx/devkit';
+import {
+  determineProjectNameAndRootOptions,
+  ensureRootProjectName,
+} from '@nx/devkit/internal';
 import { isUsingTsSolutionSetup } from '@nx/js/internal';
 
 import { join } from 'path';
@@ -29,6 +32,7 @@ import { Schema } from './schema';
 import { generator as initGenerator } from '../init/generator';
 
 export interface NormalizedSchema extends Schema {
+  name: string;
   appProjectRoot: string;
   parsedTags: string[];
 }
@@ -222,7 +226,7 @@ async function addLintingToApplication(
 }
 
 export async function generator(tree: Tree, schema: Schema) {
-  const options = normalizeOptions(tree, schema);
+  const options = await normalizeOptions(tree, schema);
 
   const tasks: GeneratorCallback[] = [];
   const initTask = await initGenerator(tree, {
@@ -267,16 +271,17 @@ export async function generator(tree: Tree, schema: Schema) {
   return runTasksInSerial(...tasks);
 }
 
-function normalizeOptions(host: Tree, options: Schema): NormalizedSchema {
-  const { appsDir } = getWorkspaceLayout(host);
-
-  const appDirectory = options.directory
-    ? `${names(options.directory).fileName}/${names(options.name).fileName}`
-    : names(options.name).fileName;
-
-  const appProjectName = appDirectory.replace(new RegExp('/', 'g'), '-');
-
-  const appProjectRoot = joinPathFragments(appsDir, appDirectory);
+async function normalizeOptions(
+  host: Tree,
+  options: Schema,
+): Promise<NormalizedSchema> {
+  await ensureRootProjectName(options, 'application');
+  const { projectName, projectRoot: appProjectRoot } =
+    await determineProjectNameAndRootOptions(host, {
+      name: options.name,
+      projectType: 'application',
+      directory: options.directory,
+    });
 
   const parsedTags = options.tags
     ? options.tags.split(',').map((s) => s.trim())
@@ -284,7 +289,7 @@ function normalizeOptions(host: Tree, options: Schema): NormalizedSchema {
 
   return {
     ...options,
-    name: names(appProjectName).fileName,
+    name: projectName,
     frontendProject: options.frontendProject
       ? names(options.frontendProject).fileName
       : undefined,

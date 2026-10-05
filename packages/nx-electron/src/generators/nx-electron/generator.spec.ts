@@ -24,7 +24,7 @@ fdescribe('app', () => {
     tree = createTreeWithEmptyWorkspace();
 
     options = {
-      name: 'electron-app',
+      directory: 'electron-app',
       addProxy: false,
       proxyPort: 4000,
       skipFormat: false,
@@ -222,19 +222,48 @@ fdescribe('app', () => {
     });
   });
 
-  describe('when the directory option is provided', () => {
+  describe('when the directory is a nested path', () => {
     beforeEach(async () => {
-      options.directory = 'directory';
+      options.directory = 'apps/desktop/shell';
       await applicationGenerator(tree, options);
-      projectJson = readProjectConfiguration(tree, 'directory-electron-app');
+      projectJson = readProjectConfiguration(tree, 'shell');
+    });
+
+    it('should use the last path segment as project name', () => {
+      expect(projectJson.root).toBe('apps/desktop/shell');
     });
 
     it('should generate the project json with the correct source root', () => {
-      expect(projectJson.sourceRoot).toBe('directory/electron-app/src');
+      expect(projectJson.sourceRoot).toBe('apps/desktop/shell/src');
     });
 
     it('should generate the main.ts file', () => {
-      expect(tree.exists(`directory/electron-app/src/main.ts`)).toBeTruthy();
+      expect(tree.exists(`apps/desktop/shell/src/main.ts`)).toBeTruthy();
+    });
+
+    it('should write the build output to dist/<directory>', () => {
+      expect(projectJson.targets.build.options.outputPath).toBe(
+        'dist/apps/desktop/shell',
+      );
+    });
+
+    it('should reference the project name in the package and make targets', () => {
+      expect(projectJson.targets.package.options.name).toBe('shell');
+      expect(projectJson.targets.make.options.name).toBe('shell');
+    });
+  });
+
+  describe('when a name is provided in addition to the directory', () => {
+    beforeEach(async () => {
+      options.directory = 'apps/desktop/shell';
+      options.name = 'desktop-shell';
+      await applicationGenerator(tree, options);
+    });
+
+    it('should use the provided name as project name', () => {
+      expect(readProjectConfiguration(tree, 'desktop-shell').root).toBe(
+        'apps/desktop/shell',
+      );
     });
   });
 
