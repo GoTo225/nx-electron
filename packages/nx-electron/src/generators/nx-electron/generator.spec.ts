@@ -91,7 +91,6 @@ fdescribe('app', () => {
           production: {
             optimization: true,
             extractLicenses: true,
-            inspect: false,
             fileReplacements: [
               {
                 replace: 'electron-app/src/environments/environment.ts',

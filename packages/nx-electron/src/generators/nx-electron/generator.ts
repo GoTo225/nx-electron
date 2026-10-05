@@ -63,7 +63,6 @@ function getBuildConfig(
       production: {
         optimization: true,
         extractLicenses: true,
-        inspect: false,
         fileReplacements: [
           {
             replace: joinPathFragments(
