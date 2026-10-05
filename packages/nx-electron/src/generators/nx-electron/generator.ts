@@ -7,24 +7,24 @@ import {
   names,
   offsetFromRoot,
   ProjectConfiguration,
-  readNxJson,
   readProjectConfiguration,
   stripIndents,
   TargetConfiguration,
   Tree,
   updateJson,
-  updateNxJson,
   updateProjectConfiguration,
   runTasksInSerial,
   writeJson,
 } from '@nx/devkit';
 import {
+  addBuildTargetDefaults,
   determineProjectNameAndRootOptions,
   ensureRootProjectName,
 } from '@nx/devkit/internal';
 import {
   addProjectToTsSolutionWorkspace,
   isUsingTsSolutionSetup,
+  TS_SOLUTION_SETUP_TSCONFIG_INPUT,
   updateTsconfigFiles,
 } from '@nx/js/internal';
 
@@ -84,15 +84,25 @@ function getBuildConfig(
 function getServeConfig(options: NormalizedSchema): TargetConfiguration {
   return {
     executor: 'nx-electron:execute',
+    continuous: true,
     options: {
       buildTarget: `${options.name}:build`,
     },
   };
 }
 
+function getPackagingDependsOn(
+  options: NormalizedSchema,
+): TargetConfiguration['dependsOn'] {
+  return options.frontendProject
+    ? ['build', { projects: [options.frontendProject], target: 'build' }]
+    : ['build'];
+}
+
 function getPackageConfig(options: NormalizedSchema): TargetConfiguration {
   return {
     executor: 'nx-electron:package',
+    dependsOn: getPackagingDependsOn(options),
     options: {
       name: options.name,
       frontendProject: options.frontendProject || '',
@@ -106,6 +116,7 @@ function getPackageConfig(options: NormalizedSchema): TargetConfiguration {
 function getMakeConfig(options: NormalizedSchema): TargetConfiguration {
   return {
     executor: 'nx-electron:make',
+    dependsOn: getPackagingDependsOn(options),
     options: {
       name: options.name,
       frontendProject: options.frontendProject || '',
@@ -150,12 +161,9 @@ function addProject(tree: Tree, options: NormalizedSchema) {
     );
   }
 
-  const nxJsonConfiguration = readNxJson(tree);
-
-  if (!nxJsonConfiguration.defaultProject) {
-    nxJsonConfiguration.defaultProject = options.name;
-    updateNxJson(tree, nxJsonConfiguration);
-  }
+  addBuildTargetDefaults(tree, 'nx-electron:build', 'build', [
+    TS_SOLUTION_SETUP_TSCONFIG_INPUT,
+  ]);
 }
 
 function updateConstantsFile(tree: Tree, options: NormalizedSchema) {

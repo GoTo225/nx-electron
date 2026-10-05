@@ -1,6 +1,7 @@
 import {
   addProjectConfiguration,
   readJson,
+  readNxJson,
   readProjectConfiguration,
   Tree,
   updateJson,
@@ -106,6 +107,7 @@ fdescribe('app', () => {
     it('should generate the project json with the correct serve target', () => {
       expect(projectJson.targets.serve).toEqual({
         executor: 'nx-electron:execute',
+        continuous: true,
         options: {
           buildTarget: 'electron-app:build',
         },
@@ -115,6 +117,7 @@ fdescribe('app', () => {
     it('should generate the project json with the correct package target', () => {
       expect(projectJson.targets.package).toEqual({
         executor: 'nx-electron:package',
+        dependsOn: ['build'],
         options: {
           name: 'electron-app',
           frontendProject: '',
@@ -128,6 +131,7 @@ fdescribe('app', () => {
     it('should generate the project json with the correct make target', () => {
       expect(projectJson.targets.make).toEqual({
         executor: 'nx-electron:make',
+        dependsOn: ['build'],
         options: {
           name: 'electron-app',
           frontendProject: '',
@@ -135,6 +139,22 @@ fdescribe('app', () => {
           outputPath: 'dist/executables',
         },
       });
+    });
+  });
+
+  describe('the nx.json changes', () => {
+    beforeEach(async () => {
+      await applicationGenerator(tree, options);
+    });
+
+    it('should add cacheable target defaults for the nx-electron:build executor', () => {
+      expect(readNxJson(tree).targetDefaults['nx-electron:build']).toEqual(
+        expect.objectContaining({ cache: true, dependsOn: ['^build'] }),
+      );
+    });
+
+    it('should not set the defaultProject', () => {
+      expect(readNxJson(tree).defaultProject).toBeUndefined();
     });
   });
 
@@ -212,6 +232,21 @@ fdescribe('app', () => {
       expect(
         tree.exists('apps/electron-frontend/proxy.conf.json'),
       ).toBeTruthy();
+    });
+
+    it('should build the frontend project before packaging', () => {
+      const frontendBuild = {
+        projects: ['electron-frontend'],
+        target: 'build',
+      };
+      expect(projectJson.targets.package.dependsOn).toEqual([
+        'build',
+        frontendBuild,
+      ]);
+      expect(projectJson.targets.make.dependsOn).toEqual([
+        'build',
+        frontendBuild,
+      ]);
     });
 
     it('should add the proxy config to the frontend project', () => {
