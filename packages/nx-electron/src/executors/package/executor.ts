@@ -78,7 +78,9 @@ export async function executor(
     options = mergePresetOptions(options);
     options = addMissingDefaultOptions(options);
 
-    syncArtifactMetadata(options);
+    const appSourcePath = resolveAppSourcePath(options, context);
+
+    syncArtifactMetadata(options, appSourcePath);
 
     const platforms: Platform[] = _createPlatforms(options.platform);
     const targets: Map<Platform, Map<Arch, string[]>> = _createTargets(
@@ -86,7 +88,11 @@ export async function executor(
       null,
       options.arch
     );
-    const baseConfig: Configuration = _createBaseConfig(options, context);
+    const baseConfig: Configuration = _createBaseConfig(
+      options,
+      context,
+      appSourcePath
+    );
     const config: Configuration = _createConfigFromOptions(options, baseConfig);
     const normalizedOptions: CliOptions = _normalizeBuilderOptions(
       targets,
@@ -94,7 +100,7 @@ export async function executor(
       rawOptions
     );
 
-    await beforeBuild(options.root, options.sourcePath, options.name);
+    await beforeBuild(appSourcePath, options.name);
     await build(normalizedOptions);
 
     success = true;
@@ -105,13 +111,30 @@ export async function executor(
   return { success };
 }
 
-async function beforeBuild(
-  projectRoot: string,
-  sourcePath: string,
-  appName: string
-) {
+/**
+ * Returns the build output directory of the electron app, as configured on
+ * its `nx-electron:build` target. `<sourcePath>/<name>` only matches it for
+ * apps directly in the apps directory (not with `--directory` or in the TS
+ * solution setup), so it is used as fallback only.
+ */
+export function resolveAppSourcePath(
+  options: PackageElectronBuilderOptions,
+  context: ExecutorContext
+): string {
+  const targets = context.projectGraph?.nodes[options.name]?.data.targets;
+  const buildTarget = Object.values(targets ?? {}).find(
+    (target) => target.executor === 'nx-electron:build'
+  );
+  const outputPath: unknown = buildTarget?.options?.outputPath;
+
+  return typeof outputPath === 'string' && outputPath.length > 0
+    ? resolve(options.root, outputPath)
+    : resolve(options.root, options.sourcePath, options.name);
+}
+
+async function beforeBuild(appSourcePath: string, appName: string) {
   await writeFileAsync(
-    join(projectRoot, sourcePath, appName, 'index.js'),
+    join(appSourcePath, 'index.js'),
     `const Main = require('./${appName}/main.js');`
   );
 }
@@ -160,7 +183,8 @@ function _createTargets(
 
 export function _createBaseConfig(
   options: PackageElectronBuilderOptions,
-  context: ExecutorContext
+  context: ExecutorContext,
+  appSourcePath: string
 ): Configuration {
   const outputPath = options.prepackageOnly
     ? options.outputPath.replace('executables', 'packages')
@@ -209,12 +233,12 @@ export function _createBaseConfig(
     files: files.concat([
       './package.json',
       {
-        from: resolve(options.sourcePath, options.name),
+        from: appSourcePath,
         to: options.name,
         filter: ['main.js', '?(*.)preload.js', 'assets'],
       },
       {
-        from: resolve(options.sourcePath, options.name),
+        from: appSourcePath,
         to: '',
         filter: ['index.js', 'package.json'],
       },
@@ -365,7 +389,8 @@ function _normalizeBuilderOptions(
  * deep-merged and a `null` value removes the field.
  */
 export function syncArtifactMetadata(
-  options: PackageElectronBuilderOptions
+  options: PackageElectronBuilderOptions,
+  appSourcePath = resolve(options.root, options.sourcePath, options.name)
 ): void {
   const metadata: Record<string, unknown> = {
     ...(options.extraMetadata as Record<string, unknown> | undefined),
@@ -383,12 +408,7 @@ export function syncArtifactMetadata(
     return;
   }
 
-  const packageJsonPath = resolve(
-    options.root,
-    options['sourcePath'],
-    options.name,
-    'package.json'
-  );
+  const packageJsonPath = resolve(appSourcePath, 'package.json');
 
   if (!existsSync(packageJsonPath)) {
     return;

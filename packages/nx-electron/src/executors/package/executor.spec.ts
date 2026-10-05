@@ -1,8 +1,10 @@
 import { ExecutorContext, logger } from '@nx/devkit';
 import { resolve } from 'path';
 import * as fs from 'fs';
+import { FileSet } from 'electron-builder';
 import {
   PackageElectronBuilderOptions,
+  resolveAppSourcePath,
   syncArtifactMetadata,
   _createBaseConfig,
   _createConfigFromOptions,
@@ -45,6 +47,93 @@ function makeOptions(
     ...overrides,
   };
 }
+
+/** An executor context whose project graph contains the electron app's targets. */
+function makeContext(
+  targets: Record<string, { executor: string; options?: object }>,
+  projectName = 'electron-app',
+): ExecutorContext {
+  return {
+    root: '.',
+    projectName,
+    projectGraph: {
+      nodes: {
+        [projectName]: {
+          name: projectName,
+          type: 'app',
+          data: { root: `apps/${projectName}`, targets },
+        },
+      },
+      dependencies: {},
+    },
+  } as unknown as ExecutorContext;
+}
+
+describe('resolveAppSourcePath', () => {
+  it('should use the outputPath of the nx-electron:build target', () => {
+    const context = makeContext({
+      build: {
+        executor: 'nx-electron:build',
+        options: { outputPath: 'dist/apps/desktop/shell' },
+      },
+    });
+
+    expect(resolveAppSourcePath(makeOptions(), context)).toEqual(
+      resolve('.', 'dist/apps/desktop/shell'),
+    );
+  });
+
+  it('should find the nx-electron:build target under any target name', () => {
+    const context = makeContext({
+      lint: { executor: '@nx/eslint:lint' },
+      'build-electron': {
+        executor: 'nx-electron:build',
+        options: { outputPath: 'dist/packages/electron-app' },
+      },
+    });
+
+    expect(resolveAppSourcePath(makeOptions(), context)).toEqual(
+      resolve('.', 'dist/packages/electron-app'),
+    );
+  });
+
+  it('should fall back to <sourcePath>/<name> without an nx-electron:build target', () => {
+    const context = makeContext({
+      build: { executor: 'nx:run-commands', options: { outputPath: 'out' } },
+    });
+
+    expect(resolveAppSourcePath(makeOptions(), context)).toEqual(
+      resolve('.', 'dist/apps', 'electron-app'),
+    );
+  });
+
+  it('should fall back to <sourcePath>/<name> when the app is not in the project graph', () => {
+    const context = makeContext({}, 'other-project');
+
+    expect(resolveAppSourcePath(makeOptions(), context)).toEqual(
+      resolve('.', 'dist/apps', 'electron-app'),
+    );
+  });
+});
+
+describe('_createBaseConfig', () => {
+  it('should copy the electron app from its build output', () => {
+    const appSourcePath = resolve('.', 'dist/apps/desktop/shell');
+    const config = _createBaseConfig(
+      makeOptions({ name: 'desktop-shell', frontendProject: '' }),
+      makeContext({}),
+      appSourcePath,
+    );
+
+    const appFileSets = (config.files as Array<FileSet | string>).filter(
+      (file): file is FileSet => typeof file === 'object',
+    );
+    expect(appFileSets.map((file) => [file.from, file.to])).toEqual([
+      [appSourcePath, 'desktop-shell'],
+      [appSourcePath, ''],
+    ]);
+  });
+});
 
 describe('MakeElectronBuilder', () => {
   let context: ExecutorContext;
@@ -95,6 +184,18 @@ describe('syncArtifactMetadata', () => {
     expect(writeMock).toHaveBeenCalledTimes(1);
     expect(writeMock.mock.calls[0][0]).toEqual(packageJsonPath);
     expect(written().version).toEqual('1.2.3');
+  });
+
+  it('should update the package.json in the given app source path', () => {
+    const appSourcePath = resolve('.', 'dist/apps/desktop/shell');
+    syncArtifactMetadata(
+      makeOptions({ extraMetadata: { version: '1.2.3' } }),
+      appSourcePath,
+    );
+
+    expect(writeMock.mock.calls[0][0]).toEqual(
+      resolve(appSourcePath, 'package.json'),
+    );
   });
 
   it('should reflect extraMetadata.name into the bundled package.json', () => {
@@ -342,7 +443,7 @@ describe('copy step source validation', () => {
     it('fails when the frontend project has not been built', () => {
       existing(appDir);
 
-      expect(() => _createBaseConfig(makeOptions(), context)).toThrow(
+      expect(() => _createBaseConfig(makeOptions(), context, appDir)).toThrow(
         new RegExp(escapeRegExp(frontendDir))
       );
     });
@@ -351,7 +452,8 @@ describe('copy step source validation', () => {
       expect(() =>
         _createBaseConfig(
           makeOptions({ extraProjects: ['shared-lib'] }),
-          context
+          context,
+          appDir
         )
       ).toThrow(new RegExp(escapeRegExp(resolve('dist/apps', 'shared-lib'))));
     });
@@ -362,7 +464,8 @@ describe('copy step source validation', () => {
           makeOptions({
             files: [{ from: 'worker/scripts', to: 'scripts' }],
           }),
-          context
+          context,
+          appDir
         )
       ).toThrow(
         new RegExp(escapeRegExp(resolve('dist/apps', 'worker/scripts')))
@@ -375,7 +478,8 @@ describe('copy step source validation', () => {
 
       const config = _createBaseConfig(
         makeOptions({ files: [{ from: 'worker/scripts', to: 'scripts' }] }),
-        context
+        context,
+        appDir
       );
 
       expect(config.files).toEqual(
